@@ -27,10 +27,12 @@ async def entrypoint(ctx: JobContext):
         llm=openai.LLM(),
         tts=elevenlabs.TTS(),
         chat_ctx=initial_ctx,
+        debug=True,
+        # plotting=True,
     )
     assistant.start(ctx.room)
 
-    await asyncio.sleep(3)
+    #await asyncio.sleep(3)
     await assistant.say("Hey, how can I help you today?", allow_interruptions=True)
 
 

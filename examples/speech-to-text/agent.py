@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import os
+
+import dotenv
 
 from livekit import agents, rtc
 from livekit.agents import (
@@ -51,4 +54,6 @@ async def request_fnc(req: JobRequest) -> None:
 
 
 if __name__ == "__main__":
+    dotenv.load_dotenv()
+    print(os.getenv("DEEPGRAM_API_KEY"))
     cli.run_app(WorkerOptions(request_fnc=request_fnc))

@@ -21,11 +21,14 @@ async def entrypoint(job: JobContext):
     options.source = rtc.TrackSource.SOURCE_MICROPHONE
     await job.room.local_participant.publish_track(track, options)
 
-    tts = TTS(
-        api_key=os.getenv("OPENAI_API_KEY"),
-        model="tts-1",
-        voice="nova",
-    )
+    try:
+        tts = TTS(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            model="tts-1",
+            voice="nova",
+        )
+    except Exception as e:
+        print(e)
     await asyncio.sleep(1)
     logging.info("Speaking Hello!")
     async for output in tts.synthesize("Hello!"):
