@@ -23,7 +23,7 @@ from livekit.agents import Plugin
 
 class LmntPlugin(Plugin):
     def __init__(self):
-        super().__init__(__name__, __version__)
+        super().__init__(__name__, __version__, 'livekit-plugins-lmnt')
 
     def download_files(self):
         pass

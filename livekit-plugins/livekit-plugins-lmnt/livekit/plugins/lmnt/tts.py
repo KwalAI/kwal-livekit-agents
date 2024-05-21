@@ -62,7 +62,9 @@ class TTS(tts.TTS):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
     ) -> None:
-        super().__init__(streaming_supported=True)
+        super().__init__(
+            streaming_supported=True, sample_rate=24000, num_channels=1
+        )
         api_key = api_key or os.environ.get("LMNT_API_KEY")
         if not api_key:
             raise ValueError("LMNT_API_KEY must be set")

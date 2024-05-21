@@ -8,7 +8,7 @@ from livekit.agents.llm import (
     ChatRole,
 )
 from livekit.agents.voice_assistant import VoiceAssistant
-from livekit.plugins import deepgram, elevenlabs, openai, silero
+from livekit.plugins import deepgram, elevenlabs, openai, silero, lmnt
 
 
 async def entrypoint(ctx: JobContext):
@@ -25,7 +25,7 @@ async def entrypoint(ctx: JobContext):
         vad=silero.VAD(),
         stt=deepgram.STT(),
         llm=openai.LLM(),
-        tts=elevenlabs.TTS(),
+        tts=elevenlabs.TTS(),#lmnt.TTS(),#
         chat_ctx=initial_ctx,
         debug=True,
         # plotting=True,
