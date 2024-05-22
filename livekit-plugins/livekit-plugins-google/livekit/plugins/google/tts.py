@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, asdict
-from typing import AsyncIterable, Optional, Union
+from typing import AsyncIterable, Optional, Union, List
 import asyncio
 import contextlib
 
@@ -42,6 +42,32 @@ class TTSOptions:
     audio_config: texttospeech.AudioConfig
 
 
+@dataclass
+class VoiceSettings:
+    stability: float  # [0.0 - 1.0]
+    similarity_boost: float  # [0.0 - 1.0]
+    style: float | None = None  # [0.0 - 1.0]
+    use_speaker_boost: bool | None = False
+
+
+@dataclass
+class Voice:
+    id: str
+    name: str
+    category: str
+    settings: VoiceSettings | None = None
+
+
+DEFAULT_VOICE = Voice(
+    id="EXAVITQu4vr4xnSDxMaL",
+    name="Bella",
+    category="premade",
+    settings=VoiceSettings(
+        stability=0.71, similarity_boost=0.5, style=0.0, use_speaker_boost=True
+    ),
+)
+
+
 class TTS(tts.TTS):
     def __init__(
         self,
@@ -50,6 +76,7 @@ class TTS(tts.TTS):
         language: LgType = "en-US",
         gender: GenderType = "neutral",
         voice_name: str = "",  # Not required
+        voice: Voice = DEFAULT_VOICE,
         audio_encoding: AudioEncodingType = "wav",
         sample_rate: int = 24000,
         speaking_rate: float = 1.0,
@@ -57,8 +84,10 @@ class TTS(tts.TTS):
         credentials_file: Optional[str] = None,
     ) -> None:
         super().__init__(
-            streaming_supported=False, sample_rate=sample_rate, num_channels=1
+            streaming_supported=True, sample_rate=sample_rate, num_channels=1
         )
+
+        self._opts = config
 
         if credentials_info:
             self._client = (
@@ -149,7 +178,7 @@ class TTS(tts.TTS):
     def stream(
         self,
     ) -> "SynthesizeStream":
-        return SynthesizeStream(self._session, self._opts)
+        return SynthesizeStream(self._config)
 
 
 class SynthesizeStream(tts.SynthesizeStream):
@@ -169,14 +198,14 @@ class SynthesizeStream(tts.SynthesizeStream):
 
         self._main_task = asyncio.create_task(self._run(max_retry))
 
-    def _stream_url(self) -> str:
+    """def _stream_url(self) -> str:
         base_url = self._opts.base_url
         voice_id = self._opts.voice.id
         model_id = self._opts.model_id
         sample_rate = self._opts.sample_rate
         latency = self._opts.latency
         return f"{base_url}/text-to-speech/{voice_id}/stream-input?model_id={model_id}&output_format=pcm_{sample_rate}&optimize_streaming_latency={latency}"
-
+    """
     def push_text(self, token: str | None) -> None:
         """
         Push some text to internal queue to be consumed by _run method.
@@ -258,7 +287,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                     assert data_tx is not None
                     assert tts_task is not None
 
-                    data_tx.send_nowait(data) # Correctly sendin this data
+                    data_tx.send_nowait(data) # Correctly sending this data
 
                 except Exception:
                     if retry_count >= max_retry:
@@ -295,35 +324,28 @@ class SynthesizeStream(tts.SynthesizeStream):
         )
 
         async def send_task():
-            nonlocal closing_ws
-
-            # 11labs stream must be initialized with a space
             voice = self._opts.voice
-            voice_settings = (
-                asdict(voice.settings) if voice.settings else None
-            )
-            #init_pkt = dict(
-            #    text=" ",
-            #    voice_settings=voice_settings,
+            #voice_settings = (
+            #    asdict(voice.settings) if voice.settings else None
             #)
-            #await ws.send_str(json.dumps(init_pkt))
-
             while True:
-
                 data = await data_rx.recv()
-                data_pkt = dict(
-                    text=data,
-                    try_trigger_generation=True,
-                )
-                if data == SynthesizeStream._STREAM_EOS:
-                    closing_ws = True
+                gtts = gTTS(data, lang=self._opts.voice.language_code)
+                for idx, decoded in enumerate(gtts.stream()):
+                    frame = rtc.AudioFrame(
+                        data=decoded,
+                        sample_rate=24000,
+                        num_channels=1,
+                        samples_per_channel=len(decoded) // 2,
+                    )
+                    self._event_queue.put_nowait(
+                        tts.SynthesisEvent(
+                            type=tts.SynthesisEventType.AUDIO,
+                            audio=tts.SynthesizedAudio(text="", data=frame),
+                        )
+                    )
 
-                await ws.send_str(json.dumps(data_pkt))
-
-                if closing_ws:
-                    return
-
-        async def recv_task():
+        """async def recv_task():
             nonlocal closing_ws
             while True:
                 msg = await ws.receive()
@@ -357,10 +379,10 @@ class SynthesizeStream(tts.SynthesizeStream):
                         )
                     )
                 elif data.get("isFinal"):
-                    return
+                    return"""
 
         try:
-            await asyncio.gather(send_task(), recv_task())
+            await asyncio.gather(send_task())
         except Exception:
             logger.exception("11labs connection failed")
         finally:
