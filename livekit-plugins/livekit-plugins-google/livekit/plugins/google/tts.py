@@ -1,17 +1,3 @@
-# Copyright 2023 LiveKit, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from dataclasses import dataclass, asdict
 from typing import AsyncIterable, Optional, Union, List
 import asyncio
@@ -58,25 +44,14 @@ class Voice:
     settings: VoiceSettings | None = None
 
 
-DEFAULT_VOICE = Voice(
-    id="EXAVITQu4vr4xnSDxMaL",
-    name="Bella",
-    category="premade",
-    settings=VoiceSettings(
-        stability=0.71, similarity_boost=0.5, style=0.0, use_speaker_boost=True
-    ),
-)
-
-
 class TTS(tts.TTS):
     def __init__(
         self,
         config: Optional[TTSOptions] = None,
         *,
-        language: LgType = "en-US",
+        language: LgType = "en",
         gender: GenderType = "neutral",
         voice_name: str = "",  # Not required
-        voice: Voice = DEFAULT_VOICE,
         audio_encoding: AudioEncodingType = "wav",
         sample_rate: int = 24000,
         speaking_rate: float = 1.0,
@@ -223,7 +198,7 @@ class SynthesizeStream(tts.SynthesizeStream):
 
         # TODO: Naive word boundary detection may not be good enough for all languages
         # fmt: off
-        splitters = (".", ",", "?", "!", ";", ":", "—", "-", "(", ")", "[", "]", "}", " ")
+        splitters = (".", "?", "!", ";", ":", "—", "-", "(", ")", "[", "]", "}")
         # fmt: on
 
         self._text += token
@@ -239,7 +214,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                 break
 
             seg = self._text[: last_split + 1]
-            seg = seg.strip() + " "  # 11labs expects a space at the end
+            seg = seg.strip() + " "
             self._queue.put_nowait(seg)
             self._text = self._text[last_split + 1 :]
 
@@ -266,6 +241,7 @@ class SynthesizeStream(tts.SynthesizeStream):
         retry_count = 0
         tts_task: asyncio.Task | None = None
         data_tx: aio.ChanSender[str] | None = None
+        segment = ""
 
         try:
             while True:
@@ -276,23 +252,20 @@ class SynthesizeStream(tts.SynthesizeStream):
                         break
 
                     if data == SynthesizeStream._STREAM_EOS:
-                        continue
+                        data_tx, data_rx = aio.channel()
+                        tts_task = asyncio.create_task(self._run_tts(data_rx))
 
-                    data_tx, data_rx = aio.channel()
-                    #for idx, decoded in enumerate(gtts.stream()):
-                        #fp.write(decoded)
-                        #log.debug("part-%i written to %s", idx, fp)
-                    tts_task = asyncio.create_task(self._run_tts(data_rx))
+                        assert data_tx is not None
+                        assert tts_task is not None
 
-                    assert data_tx is not None
-                    assert tts_task is not None
-
-                    data_tx.send_nowait(data) # Correctly sending this data
+                        data_tx.send_nowait(segment) # Correctly sending this data
+                    else:
+                        segment += data
 
                 except Exception:
                     if retry_count >= max_retry:
                         logger.exception(
-                            f"failed to connect to 11labs after {max_retry} retries"
+                            f"failed to connect to GTTS after {max_retry} retries"
                         )
                         break
 
@@ -300,12 +273,12 @@ class SynthesizeStream(tts.SynthesizeStream):
                     retry_count += 1
 
                     logger.warning(
-                        f"failed to connect to 11labs, retrying in {retry_delay}s"
+                        f"failed to connect to Google TTS, retrying in {retry_delay}s"
                     )
                     await asyncio.sleep(retry_delay)
 
         except Exception:
-            logger.exception("11labs task failed")
+            logger.exception("Google TTS task failed")
         finally:
             with contextlib.suppress(asyncio.CancelledError):
                 if tts_task is not None:
@@ -315,29 +288,24 @@ class SynthesizeStream(tts.SynthesizeStream):
             self._event_queue.put_nowait(None)
 
     async def _run_tts(
-        self, data_rx: aio.ChanReceiver[str]
+        self, data_rx: aio.ChanReceiver[str] = None
     ) -> None:
-        closing_ws = False
 
         self._event_queue.put_nowait(
             tts.SynthesisEvent(type=tts.SynthesisEventType.STARTED)
         )
 
-        async def send_task():
+        async def raw_text_task():
+            """ Use gtts synthetize method to create only one frame and send it to queue"""
             voice = self._opts.voice
-            #voice_settings = (
-            #    asdict(voice.settings) if voice.settings else None
-            #)
-            while True:
-                data = await data_rx.recv()
-                gtts = gTTS(data, lang=self._opts.voice.language_code)
-                for idx, decoded in enumerate(gtts.stream()):
-                    frame = rtc.AudioFrame(
-                        data=decoded,
-                        sample_rate=24000,
-                        num_channels=1,
-                        samples_per_channel=len(decoded) // 2,
-                    )
+            text_data = await data_rx.recv()
+            if text_data is None:
+                return
+            gtts = gTTS(text_data, lang=self._opts.voice.language_code, slow=False)
+            decoder = codecs.Mp3StreamDecoder()
+            for idx, audio_data in enumerate(gtts.stream()):
+                frames = decoder.decode_chunk(audio_data)
+                for frame in frames:
                     self._event_queue.put_nowait(
                         tts.SynthesisEvent(
                             type=tts.SynthesisEventType.AUDIO,
@@ -345,46 +313,25 @@ class SynthesizeStream(tts.SynthesizeStream):
                         )
                     )
 
-        """async def recv_task():
-            nonlocal closing_ws
+        async def send_task():
+            """Backupp task in case coming back to word by word streaming is needed"""
             while True:
-                msg = await ws.receive()
-                if msg.type in (
-                    aiohttp.WSMsgType.CLOSED,
-                    aiohttp.WSMsgType.CLOSE,
-                    aiohttp.WSMsgType.CLOSING,
-                ):
-                    if closing_ws:  # close is expected
-                        return
-
-                    raise Exception("11labs connection closed unexpectedly")
-
-                if msg.type != aiohttp.WSMsgType.TEXT:
-                    logger.warning("unexpected 11labs message type %s", msg.type)
-                    continue
-
-                data: dict = json.loads(msg.data)
-                if data.get("audio"):
-                    b64data = base64.b64decode(data["audio"])
-                    frame = rtc.AudioFrame(
-                        data=b64data,
-                        sample_rate=self._opts.sample_rate,
-                        num_channels=1,
-                        samples_per_channel=len(b64data) // 2,
-                    )
-                    self._event_queue.put_nowait(
-                        tts.SynthesisEvent(
-                            type=tts.SynthesisEventType.AUDIO,
-                            audio=tts.SynthesizedAudio(text="", data=frame),
+                text_data = await data_rx.recv()
+                gtts = gTTS(text_data, lang=self._opts.voice.language_code, slow=False)
+                decoder = codecs.Mp3StreamDecoder()
+                for idx, audio_data in enumerate(gtts.stream()):
+                    frames = decoder.decode_chunk(audio_data)
+                    for frame in frames:
+                        self._event_queue.put_nowait(
+                            tts.SynthesisEvent(
+                                type=tts.SynthesisEventType.AUDIO,
+                                audio=tts.SynthesizedAudio(text="", data=frame),
+                            )
                         )
-                    )
-                elif data.get("isFinal"):
-                    return"""
-
         try:
-            await asyncio.gather(send_task())
+            await asyncio.gather(raw_text_task())
         except Exception:
-            logger.exception("11labs connection failed")
+            logger.exception("Google TTS api connection failed")
         finally:
             self._event_queue.put_nowait(
                 tts.SynthesisEvent(type=tts.SynthesisEventType.FINISHED)
