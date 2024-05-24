@@ -1,11 +1,11 @@
-from dataclasses import dataclass, asdict
-from typing import AsyncIterable, Optional, Union, List
+from dataclasses import dataclass
+from typing import AsyncIterable, Union, List
 import asyncio
 import contextlib
 import os
 
 from livekit import rtc
-from livekit.agents import codecs, aio, tts
+from livekit.agents import aio, tts
 
 import azure.cognitiveservices.speech as speechsdk
 
@@ -49,12 +49,10 @@ class TTS(tts.TTS):
         *,
         language: LgType = "en",
         gender: GenderType = "neutral",
-        voice_name: str = "",  # Not required
+        voice_name: str = "en-US-AriaNeural",  # Not required
         audio_encoding: AudioEncodingType = "wav",
-        sample_rate: int = 24000,
+        sample_rate: int = 16000,
         speaking_rate: float = 1.0,
-        credentials_info: Optional[dict] = None,
-        credentials_file: Optional[str] = None,
     ) -> None:
         super().__init__(
             streaming_supported=True, sample_rate=sample_rate, num_channels=1
@@ -64,6 +62,8 @@ class TTS(tts.TTS):
         self._config = config
 
         self.azure_speech_config = speechsdk.SpeechConfig(subscription=os.getenv("AZURE_SPEECH_KEY"), region=os.getenv("AZURE_SPEECH_REGION"))
+        self.azure_speech_config.speech_synthesis_voice_name = voice_name
+        self.azure_speech_config.prosody_rate = speaking_rate
         self.pull_stream = speechsdk.audio.PullAudioOutputStream()
         self.azure_audio_config = speechsdk.audio.AudioOutputConfig(stream=self.pull_stream)
         self.synthesizer = speechsdk.SpeechSynthesizer(speech_config=self.azure_speech_config, audio_config=self.azure_audio_config)
@@ -122,15 +122,6 @@ class SynthesizeStream(tts.SynthesizeStream):
         self.synthesizer = synthetizer
 
         self._main_task = asyncio.create_task(self._run(max_retry))
-
-    """def _stream_url(self) -> str:
-        base_url = self._opts.base_url
-        voice_id = self._opts.voice.id
-        model_id = self._opts.model_id
-        sample_rate = self._opts.sample_rate
-        latency = self._opts.latency
-        return f"{base_url}/text-to-speech/{voice_id}/stream-input?model_id={model_id}&output_format=pcm_{sample_rate}&optimize_streaming_latency={latency}"
-    """
 
     def push_text(self, token: str | None) -> None:
         """
@@ -261,7 +252,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                     text="",
                                     data=rtc.AudioFrame(
                                         data=result.audio_data,
-                                        sample_rate=24000,
+                                        sample_rate=16000,
                                         num_channels=1,
                                         samples_per_channel=len(result.audio_data) // 2,  # 16-bit
                                     )
