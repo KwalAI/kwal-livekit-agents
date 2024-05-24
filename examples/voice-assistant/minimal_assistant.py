@@ -8,7 +8,7 @@ from livekit.agents.llm import (
     ChatRole,
 )
 from livekit.agents.voice_assistant import VoiceAssistant
-from livekit.plugins import deepgram, openai, silero, google#, elevenlabs, lmnt
+from livekit.plugins import deepgram, openai, silero, azure #, elevenlabs, lmnt
 
 
 async def entrypoint(ctx: JobContext):
@@ -25,14 +25,14 @@ async def entrypoint(ctx: JobContext):
         vad=silero.VAD(),
         stt=deepgram.STT(),
         llm=openai.LLM(),
-        tts=google.TTS(),#lmnt.TTS(),#
+        tts=azure.TTS(),#lmnt.TTS(),#
         chat_ctx=initial_ctx,
         debug=True,
         # plotting=True,
     )
     assistant.start(ctx.room)
 
-    #await asyncio.sleep(3)
+    await asyncio.sleep(3) # Necessary because launch is not awaited
     await assistant.say("Hey, how can I help you today?", allow_interruptions=True)
 
 
